@@ -2,12 +2,12 @@ import { create } from "zustand";
 import { storage } from "@/lib/storage";
 import {
   DEFAULT_SETTINGS,
-  PRESETS,
+  PRESET_INTERVALS,
+  presetToReminders,
   type DayStats,
   type Preset,
-  type ReminderConfig,
   type ReminderEvent,
-  type ReminderType,
+  type ReminderItem,
   type Settings,
 } from "./types";
 
@@ -31,12 +31,16 @@ interface EngineState {
   events: ReminderEvent[];
   stats: DayStats[];
   streak: StreakInfo;
-  schedule: Record<ReminderType, number>; // next-fire epoch ms
+  /** next-fire epoch ms keyed by reminder id */
+  schedule: Record<string, number>;
   sessionStart: number;
-  pendingReminder: ReminderType | null;
+  /** id of currently displayed reminder, or null */
+  pendingReminder: string | null;
 
   setPreset: (preset: Preset) => void;
-  updateReminder: (type: ReminderType, patch: Partial<ReminderConfig>) => void;
+  updateReminder: (id: string, patch: Partial<ReminderItem>) => void;
+  addReminder: (reminder: ReminderItem) => void;
+  removeReminder: (id: string) => void;
   setOverlayEffect: (effect: Settings["overlayEffect"]) => void;
   setTheme: (theme: Settings["theme"]) => void;
   setDesktopNotifications: (on: boolean) => void;
@@ -45,7 +49,7 @@ interface EngineState {
   completeOnboarding: () => void;
   resetAllData: () => void;
 
-  triggerReminder: (type: ReminderType) => void;
+  triggerReminder: (id: string) => void;
   acknowledgeReminder: (completed: boolean) => void;
   tick: () => void;
 }
@@ -58,27 +62,25 @@ const ensureToday = (stats: DayStats[]): DayStats[] => {
     {
       date: t,
       screenMinutes: 0,
-      byType: {
-        water: { shown: 0, completed: 0 },
-        eyes: { shown: 0, completed: 0 },
-        walk: { shown: 0, completed: 0 },
-        stretch: { shown: 0, completed: 0 },
-      },
+      byId: {},
     },
   ].slice(-30);
 };
 
 const computeSchedule = (
-  reminders: Settings["reminders"],
+  reminders: ReminderItem[],
   base = Date.now(),
-): Record<ReminderType, number> => ({
-  water: reminders.water.enabled ? base + reminders.water.intervalMin * 60_000 : Number.MAX_SAFE_INTEGER,
-  eyes: reminders.eyes.enabled ? base + reminders.eyes.intervalMin * 60_000 : Number.MAX_SAFE_INTEGER,
-  walk: reminders.walk.enabled ? base + reminders.walk.intervalMin * 60_000 : Number.MAX_SAFE_INTEGER,
-  stretch: reminders.stretch.enabled ? base + reminders.stretch.intervalMin * 60_000 : Number.MAX_SAFE_INTEGER,
-});
+): Record<string, number> => {
+  const out: Record<string, number> = {};
+  reminders.forEach((r) => {
+    out[r.id] = r.enabled ? base + r.intervalMin * 60_000 : Number.MAX_SAFE_INTEGER;
+  });
+  return out;
+};
 
-const persistAll = (s: Pick<EngineState, "settings" | "events" | "stats" | "schedule" | "sessionStart" | "streak">) => {
+const persistAll = (
+  s: Pick<EngineState, "settings" | "events" | "stats" | "schedule" | "sessionStart" | "streak">,
+) => {
   storage.set(SETTINGS_KEY, s.settings);
   storage.set(EVENTS_KEY, s.events.slice(-500));
   storage.set(STATS_KEY, s.stats);
@@ -87,18 +89,95 @@ const persistAll = (s: Pick<EngineState, "settings" | "events" | "stats" | "sche
   storage.set(STREAK_KEY, s.streak);
 };
 
-const initialSettings = storage.get<Settings>(SETTINGS_KEY, DEFAULT_SETTINGS);
-const initialStats = ensureToday(storage.get<DayStats[]>(STATS_KEY, []));
-const initialSchedule = storage.get<Record<ReminderType, number>>(
+/** Migrate legacy v1 shape (record-keyed reminders + byType stats) to v2 (list + byId). */
+const migrateSettings = (raw: unknown): Settings => {
+  if (!raw || typeof raw !== "object") return DEFAULT_SETTINGS;
+  const obj = raw as Record<string, unknown>;
+  if (Array.isArray(obj.reminders)) {
+    return { ...DEFAULT_SETTINGS, ...(obj as Partial<Settings>) } as Settings;
+  }
+  // legacy: reminders was Record<ReminderType, ReminderConfig>
+  const legacyReminders = obj.reminders as
+    | Record<string, { enabled: boolean; intervalMin: number }>
+    | undefined;
+  const fresh = presetToReminders((obj.preset as Preset) ?? "balanced");
+  if (legacyReminders) {
+    fresh.forEach((r) => {
+      const lr = legacyReminders[r.id];
+      if (lr) {
+        r.enabled = lr.enabled;
+        r.intervalMin = lr.intervalMin;
+      }
+    });
+  }
+  return {
+    ...DEFAULT_SETTINGS,
+    ...(obj as Partial<Settings>),
+    reminders: fresh,
+  } as Settings;
+};
+
+const migrateStats = (raw: unknown): DayStats[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((d): DayStats | null => {
+      if (!d || typeof d !== "object") return null;
+      const day = d as Record<string, unknown>;
+      if (typeof day.date !== "string") return null;
+      const screenMinutes = typeof day.screenMinutes === "number" ? day.screenMinutes : 0;
+      if (day.byId && typeof day.byId === "object") {
+        return { date: day.date, screenMinutes, byId: day.byId as DayStats["byId"] };
+      }
+      const byType = day.byType as Record<string, { shown: number; completed: number }> | undefined;
+      const byId: DayStats["byId"] = {};
+      if (byType) {
+        Object.entries(byType).forEach(([k, v]) => {
+          byId[k] = { shown: v.shown ?? 0, completed: v.completed ?? 0 };
+        });
+      }
+      return { date: day.date, screenMinutes, byId };
+    })
+    .filter((x): x is DayStats => x !== null);
+};
+
+const migrateEvents = (raw: unknown): ReminderEvent[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((e): ReminderEvent | null => {
+      if (!e || typeof e !== "object") return null;
+      const ev = e as Record<string, unknown>;
+      const id = (ev.id as string | undefined) ?? (ev.type as string | undefined);
+      if (!id || typeof ev.ts !== "number") return null;
+      return { id, ts: ev.ts, completed: !!ev.completed };
+    })
+    .filter((x): x is ReminderEvent => x !== null);
+};
+
+const initialSettings = migrateSettings(storage.get<unknown>(SETTINGS_KEY, DEFAULT_SETTINGS));
+const initialStats = ensureToday(migrateStats(storage.get<unknown>(STATS_KEY, [])));
+const initialEvents = migrateEvents(storage.get<unknown>(EVENTS_KEY, []));
+const initialSchedule = storage.get<Record<string, number>>(
   SCHEDULE_KEY,
   computeSchedule(initialSettings.reminders),
 );
+// Drop schedule entries for reminders that no longer exist
+Object.keys(initialSchedule).forEach((id) => {
+  if (!initialSettings.reminders.some((r) => r.id === id)) delete initialSchedule[id];
+});
+// Add missing reminders to schedule
+initialSettings.reminders.forEach((r) => {
+  if (!(r.id in initialSchedule)) {
+    initialSchedule[r.id] = r.enabled
+      ? Date.now() + r.intervalMin * 60_000
+      : Number.MAX_SAFE_INTEGER;
+  }
+});
 const initialSessionStart = storage.get<number>(SESSION_START_KEY, Date.now());
 const initialStreak = storage.get<StreakInfo>(STREAK_KEY, { current: 0, best: 0, lastDay: null });
 
 export const useEngine = create<EngineState>((set, get) => ({
   settings: initialSettings,
-  events: storage.get<ReminderEvent[]>(EVENTS_KEY, []),
+  events: initialEvents,
   stats: initialStats,
   streak: initialStreak,
   schedule: initialSchedule,
@@ -106,23 +185,51 @@ export const useEngine = create<EngineState>((set, get) => ({
   pendingReminder: null,
 
   setPreset: (preset) => {
-    const reminders = PRESETS[preset];
+    // Apply preset intervals to existing built-ins; preserve customs and enabled state.
+    const intervals = PRESET_INTERVALS[preset];
+    const reminders = get().settings.reminders.map((r) =>
+      r.kind === "custom" ? r : { ...r, intervalMin: intervals[r.kind] },
+    );
     const settings = { ...get().settings, preset, reminders };
     const schedule = computeSchedule(reminders);
     set({ settings, schedule });
     persistAll({ ...get(), settings, schedule });
   },
 
-  updateReminder: (type, patch) => {
-    const reminders = {
-      ...get().settings.reminders,
-      [type]: { ...get().settings.reminders[type], ...patch },
-    };
-    const settings = { ...get().settings, reminders, preset: get().settings.preset };
+  updateReminder: (id, patch) => {
+    const reminders = get().settings.reminders.map((r) =>
+      r.id === id ? { ...r, ...patch } : r,
+    );
+    const settings = { ...get().settings, reminders };
     const schedule = { ...get().schedule };
-    schedule[type] = reminders[type].enabled
-      ? Date.now() + reminders[type].intervalMin * 60_000
-      : Number.MAX_SAFE_INTEGER;
+    const updated = reminders.find((r) => r.id === id);
+    if (updated) {
+      schedule[id] = updated.enabled
+        ? Date.now() + updated.intervalMin * 60_000
+        : Number.MAX_SAFE_INTEGER;
+    }
+    set({ settings, schedule });
+    persistAll({ ...get(), settings, schedule });
+  },
+
+  addReminder: (reminder) => {
+    const reminders = [...get().settings.reminders, reminder];
+    const settings = { ...get().settings, reminders };
+    const schedule = {
+      ...get().schedule,
+      [reminder.id]: reminder.enabled
+        ? Date.now() + reminder.intervalMin * 60_000
+        : Number.MAX_SAFE_INTEGER,
+    };
+    set({ settings, schedule });
+    persistAll({ ...get(), settings, schedule });
+  },
+
+  removeReminder: (id) => {
+    const reminders = get().settings.reminders.filter((r) => r.id !== id);
+    const settings = { ...get().settings, reminders };
+    const schedule = { ...get().schedule };
+    delete schedule[id];
     set({ settings, schedule });
     persistAll({ ...get(), settings, schedule });
   },
@@ -188,41 +295,37 @@ export const useEngine = create<EngineState>((set, get) => ({
     });
   },
 
-  triggerReminder: (type) => {
-    const stats = ensureToday(get().stats).map((day) =>
-      day.date === todayKey()
-        ? {
-            ...day,
-            byType: {
-              ...day.byType,
-              [type]: { ...day.byType[type], shown: day.byType[type].shown + 1 },
-            },
-          }
-        : day,
-    );
+  triggerReminder: (id) => {
+    const reminder = get().settings.reminders.find((r) => r.id === id);
+    if (!reminder) return;
+    const stats = ensureToday(get().stats).map((day) => {
+      if (day.date !== todayKey()) return day;
+      const cur = day.byId[id] ?? { shown: 0, completed: 0 };
+      return {
+        ...day,
+        byId: { ...day.byId, [id]: { ...cur, shown: cur.shown + 1 } },
+      };
+    });
     const schedule = {
       ...get().schedule,
-      [type]: Date.now() + get().settings.reminders[type].intervalMin * 60_000,
+      [id]: Date.now() + reminder.intervalMin * 60_000,
     };
-    set({ pendingReminder: type, stats, schedule });
+    set({ pendingReminder: id, stats, schedule });
     persistAll({ ...get(), stats, schedule });
   },
 
   acknowledgeReminder: (completed) => {
-    const type = get().pendingReminder;
-    if (!type) return;
-    const events = [...get().events, { type, ts: Date.now(), completed }];
-    const stats = get().stats.map((day) =>
-      day.date === todayKey() && completed
-        ? {
-            ...day,
-            byType: {
-              ...day.byType,
-              [type]: { ...day.byType[type], completed: day.byType[type].completed + 1 },
-            },
-          }
-        : day,
-    );
+    const id = get().pendingReminder;
+    if (!id) return;
+    const events = [...get().events, { id, ts: Date.now(), completed }];
+    const stats = get().stats.map((day) => {
+      if (day.date !== todayKey() || !completed) return day;
+      const cur = day.byId[id] ?? { shown: 0, completed: 0 };
+      return {
+        ...day,
+        byId: { ...day.byId, [id]: { ...cur, completed: cur.completed + 1 } },
+      };
+    });
 
     // streak update — completing at least one reminder counts the day
     const today = todayKey();
@@ -259,13 +362,13 @@ export const useEngine = create<EngineState>((set, get) => ({
     }
 
     const now = Date.now();
-    const due = (Object.entries(schedule) as [ReminderType, number][])
-      .filter(([type, t]) => settings.reminders[type].enabled && t <= now)
+    const enabledIds = new Set(settings.reminders.filter((r) => r.enabled).map((r) => r.id));
+    const due = Object.entries(schedule)
+      .filter(([id, t]) => enabledIds.has(id) && t <= now)
       .sort((a, b) => a[1] - b[1])[0];
 
     if (due) {
       get().triggerReminder(due[0]);
-      // session length informs next reminder copy in dashboard, no further action
       void sessionStart;
     }
   },
@@ -279,21 +382,24 @@ export const applyTheme = (theme: Settings["theme"]) => {
   root.classList.toggle("dark", dark);
 };
 
-export const nextReminder = (state: EngineState): { type: ReminderType; at: number } | null => {
-  const entries = (Object.entries(state.schedule) as [ReminderType, number][]).filter(
-    ([type]) => state.settings.reminders[type].enabled,
-  );
-  if (!entries.length) return null;
-  const [type, at] = entries.sort((a, b) => a[1] - b[1])[0];
-  return { type, at };
+export const nextReminder = (state: EngineState): { reminder: ReminderItem; at: number } | null => {
+  const enabled = state.settings.reminders.filter((r) => r.enabled);
+  if (!enabled.length) return null;
+  const upcoming = enabled
+    .map((r) => ({ reminder: r, at: state.schedule[r.id] ?? Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.at - b.at)[0];
+  return upcoming;
 };
+
+export const reminderById = (state: EngineState, id: string): ReminderItem | undefined =>
+  state.settings.reminders.find((r) => r.id === id);
 
 export const wellnessScore = (state: EngineState): number => {
   const today = state.stats.find((s) => s.date === todayKey());
-  if (!today) return 0;
+  if (!today) return 100;
   let shown = 0;
   let completed = 0;
-  (Object.values(today.byType) as { shown: number; completed: number }[]).forEach((v) => {
+  Object.values(today.byId).forEach((v) => {
     shown += v.shown;
     completed += v.completed;
   });
