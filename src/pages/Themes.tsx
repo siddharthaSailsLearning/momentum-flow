@@ -22,7 +22,6 @@ export const Themes = () => {
   const settings = useEngine((s) => s.settings);
   const setTheme = useEngine((s) => s.setTheme);
   const setOverlayEffect = useEngine((s) => s.setOverlayEffect);
-  const trigger = useEngine((s) => s.triggerReminder);
 
   return (
     <div className="space-y-6">
