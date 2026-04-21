@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { useEngine, applyTheme } from "@/services/engine";
-import { reminderLabel, reminderMessage } from "@/services/messages";
+import { useEngine, applyTheme, reminderById } from "@/services/engine";
+import { messageForReminder } from "@/services/messages";
 
 /**
  * Mounts global side-effects:
@@ -13,6 +13,9 @@ export const useEngineRuntime = () => {
   const theme = useEngine((s) => s.settings.theme);
   const desktopNotifications = useEngine((s) => s.settings.desktopNotifications);
   const pendingReminder = useEngine((s) => s.pendingReminder);
+  const reminder = useEngine((s) =>
+    s.pendingReminder ? reminderById(s, s.pendingReminder) : undefined,
+  );
 
   // tick every 60s; first tick after 2s so app can render
   useEffect(() => {
@@ -36,17 +39,17 @@ export const useEngineRuntime = () => {
 
   // desktop notification
   useEffect(() => {
-    if (!pendingReminder) return;
+    if (!pendingReminder || !reminder) return;
     if (!desktopNotifications) return;
     if (!("Notification" in window)) return;
     if (Notification.permission !== "granted") return;
     try {
-      new Notification(`FocusPulse — ${reminderLabel[pendingReminder]}`, {
-        body: reminderMessage(pendingReminder),
+      new Notification(`FocusPulse — ${reminder.label}`, {
+        body: messageForReminder(reminder),
         silent: false,
       });
     } catch {
       /* ignore */
     }
-  }, [pendingReminder, desktopNotifications]);
+  }, [pendingReminder, reminder, desktopNotifications]);
 };

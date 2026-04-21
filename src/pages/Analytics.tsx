@@ -1,29 +1,34 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { useEngine } from "@/services/engine";
-import { reminderLabel } from "@/services/messages";
-import type { ReminderType } from "@/services/types";
+import { builtInGradient, customGradientStyle } from "@/services/messages";
 import { cn } from "@/lib/utils";
-
-const types: ReminderType[] = ["water", "eyes", "walk", "stretch"];
-const ACCENT: Record<ReminderType, string> = {
-  water: "bg-water",
-  eyes: "bg-eyes",
-  walk: "bg-walk",
-  stretch: "bg-stretch",
-};
 
 export const Analytics = () => {
   const stats = useEngine((s) => s.stats);
+  const reminders = useEngine((s) => s.settings.reminders);
   const last7 = stats.slice(-7);
 
-  const totalShown = last7.reduce(
-    (acc, d) => acc + types.reduce((a, t) => a + d.byType[t].shown, 0),
-    0,
-  );
-  const totalCompleted = last7.reduce(
-    (acc, d) => acc + types.reduce((a, t) => a + d.byType[t].completed, 0),
-    0,
-  );
+  const aggregate = (id: string) => {
+    let shown = 0;
+    let completed = 0;
+    last7.forEach((d) => {
+      const v = d.byId[id];
+      if (v) {
+        shown += v.shown;
+        completed += v.completed;
+      }
+    });
+    return { shown, completed };
+  };
+
+  let totalShown = 0;
+  let totalCompleted = 0;
+  reminders.forEach((r) => {
+    const a = aggregate(r.id);
+    totalShown += a.shown;
+    totalCompleted += a.completed;
+  });
+
   const adherence = totalShown ? Math.round((totalCompleted / totalShown) * 100) : 0;
   const avgScreen =
     last7.length === 0 ? 0 : Math.round(last7.reduce((a, d) => a + d.screenMinutes, 0) / last7.length);
@@ -90,30 +95,39 @@ export const Analytics = () => {
 
       <Card className="glass-soft border-0">
         <CardContent className="p-5">
-          <p className="mb-4 text-sm font-semibold">By category (last 7 days)</p>
-          <div className="space-y-3">
-            {types.map((t) => {
-              const shown = last7.reduce((a, d) => a + d.byType[t].shown, 0);
-              const completed = last7.reduce((a, d) => a + d.byType[t].completed, 0);
-              const pct = shown ? Math.round((completed / shown) * 100) : 0;
-              return (
-                <div key={t}>
-                  <div className="mb-1 flex items-center justify-between text-xs">
-                    <span className="font-medium">{reminderLabel[t]}</span>
-                    <span className="tabular-nums text-muted-foreground">
-                      {completed}/{shown} · {pct}%
-                    </span>
+          <p className="mb-4 text-sm font-semibold">By reminder (last 7 days)</p>
+          {reminders.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No reminders configured.</p>
+          ) : (
+            <div className="space-y-3">
+              {reminders.map((r) => {
+                const { shown, completed } = aggregate(r.id);
+                const pct = shown ? Math.round((completed / shown) * 100) : 0;
+                const isBuiltIn = r.kind !== "custom";
+                const barClass = isBuiltIn ? builtInGradient[r.kind as Exclude<typeof r.kind, "custom">] : "";
+                const barStyle = !isBuiltIn ? customGradientStyle(r.hue ?? 280) : undefined;
+                return (
+                  <div key={r.id}>
+                    <div className="mb-1 flex items-center justify-between text-xs">
+                      <span className="font-medium">
+                        <span aria-hidden className="mr-1">{r.emoji}</span>
+                        {r.label}
+                      </span>
+                      <span className="tabular-nums text-muted-foreground">
+                        {completed}/{shown} · {pct}%
+                      </span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                      <div
+                        className={cn("h-full rounded-full", barClass)}
+                        style={{ width: `${pct}%`, ...barStyle }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-secondary">
-                    <div
-                      className={cn("h-full rounded-full", ACCENT[t])}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
