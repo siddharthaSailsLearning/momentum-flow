@@ -22,7 +22,6 @@ export const Themes = () => {
   const settings = useEngine((s) => s.settings);
   const setTheme = useEngine((s) => s.setTheme);
   const setOverlayEffect = useEngine((s) => s.setOverlayEffect);
-  const trigger = useEngine((s) => s.triggerReminder);
 
   return (
     <div className="space-y-6">
@@ -80,13 +79,27 @@ export const Themes = () => {
               </button>
             ))}
           </div>
-          <div className="mt-5 flex justify-end">
-            <Button variant="outline" className="rounded-full" onClick={() => trigger("water")}>
-              Preview overlay
-            </Button>
-          </div>
+          <PreviewButton />
         </CardContent>
       </Card>
+    </div>
+  );
+};
+
+const PreviewButton = () => {
+  const reminders = useEngine((s) => s.settings.reminders);
+  const trigger = useEngine((s) => s.triggerReminder);
+  const first = reminders.find((r) => r.enabled) ?? reminders[0];
+  return (
+    <div className="mt-5 flex justify-end">
+      <Button
+        variant="outline"
+        className="rounded-full"
+        disabled={!first}
+        onClick={() => first && trigger(first.id)}
+      >
+        Preview overlay
+      </Button>
     </div>
   );
 };

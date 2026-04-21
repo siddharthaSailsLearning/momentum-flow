@@ -1,18 +1,11 @@
 import { useEffect, useState } from "react";
-import { Activity, Droplet, Eye, Flame, Footprints, StretchHorizontal, Trophy } from "lucide-react";
+import { Activity, Flame, Trophy } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useEngine, nextReminder, wellnessScore } from "@/services/engine";
-import { reminderLabel } from "@/services/messages";
-import type { Preset, ReminderType } from "@/services/types";
+import { builtInGradient, customGradientStyle } from "@/services/messages";
+import type { Preset, ReminderItem } from "@/services/types";
 import { cn } from "@/lib/utils";
-
-const TYPE_ICON: Record<ReminderType, typeof Droplet> = {
-  water: Droplet,
-  eyes: Eye,
-  walk: Footprints,
-  stretch: StretchHorizontal,
-};
 
 const formatCountdown = (ms: number) => {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -47,6 +40,13 @@ const PresetButton = ({
   </button>
 );
 
+const tileSurface = (r: ReminderItem) => {
+  if (r.kind === "custom") {
+    return { className: "", style: customGradientStyle(r.hue ?? 280) };
+  }
+  return { className: builtInGradient[r.kind], style: undefined as React.CSSProperties | undefined };
+};
+
 export const Dashboard = () => {
   const state = useEngine();
   const [now, setNow] = useState(Date.now());
@@ -59,7 +59,7 @@ export const Dashboard = () => {
   const today = state.stats.find((s) => s.date === todayKey());
   const next = nextReminder(state);
   const score = wellnessScore(state);
-  const waterCompleted = today?.byType.water.completed ?? 0;
+  const waterCompleted = today?.byId.water?.completed ?? 0;
 
   return (
     <div className="space-y-6">
@@ -77,7 +77,7 @@ export const Dashboard = () => {
             <div className="mt-6 flex items-end gap-4">
               <div>
                 <p className="text-xs text-muted-foreground">
-                  {reminderLabel[next.type]} in
+                  {next.reminder.label} in
                 </p>
                 <p className="text-5xl font-bold tabular-nums tracking-tight md:text-6xl">
                   {formatCountdown(next.at - now)}
@@ -105,7 +105,7 @@ export const Dashboard = () => {
           value={`${Math.floor((today?.screenMinutes ?? 0) / 60)}h ${(today?.screenMinutes ?? 0) % 60}m`}
         />
         <StatCard
-          icon={Droplet}
+          emoji="💧"
           label="Hydration breaks"
           value={`${waterCompleted}`}
           accent="bg-gradient-water"
@@ -127,37 +127,49 @@ export const Dashboard = () => {
       {/* per-type tiles */}
       <div>
         <h2 className="mb-3 px-1 text-sm font-semibold text-muted-foreground">Today's pulses</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {(Object.keys(TYPE_ICON) as ReminderType[]).map((type) => {
-            const Icon = TYPE_ICON[type];
-            const stats = today?.byType[type];
-            const interval = state.settings.reminders[type].intervalMin;
-            return (
-              <Card key={type} className="glass-soft border-0">
-                <CardContent className="p-5">
-                  <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-secondary">
-                    <Icon className="size-5" />
-                  </div>
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">{reminderLabel[type]}</p>
-                  <p className="mt-1 text-2xl font-semibold">{stats?.completed ?? 0}</p>
-                  <p className="text-xs text-muted-foreground">every {interval}m · {stats?.shown ?? 0} shown</p>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+        {state.settings.reminders.length === 0 ? (
+          <Card className="glass-soft border-0">
+            <CardContent className="p-6 text-center text-sm text-muted-foreground">
+              No reminders yet. Add one from <span className="font-medium text-foreground">Reminders</span>.
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {state.settings.reminders.map((r) => {
+              const stats = today?.byId[r.id];
+              const surf = tileSurface(r);
+              return (
+                <Card key={r.id} className="glass-soft border-0">
+                  <CardContent className="p-5">
+                    <div
+                      className={cn("mb-4 flex size-10 items-center justify-center rounded-xl text-lg", surf.className || "bg-secondary")}
+                      style={surf.style}
+                    >
+                      <span aria-hidden>{r.emoji}</span>
+                    </div>
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground">{r.label}</p>
+                    <p className="mt-1 text-2xl font-semibold">{stats?.completed ?? 0}</p>
+                    <p className="text-xs text-muted-foreground">
+                      every {r.intervalMin}m · {stats?.shown ?? 0} shown
+                    </p>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <Card className="glass-soft border-0">
         <CardContent className="flex flex-col items-start gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-semibold">Try a pulse right now</p>
-            <p className="text-xs text-muted-foreground">Preview the overlay for any reminder type.</p>
+            <p className="text-xs text-muted-foreground">Preview the overlay for any reminder.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {(Object.keys(TYPE_ICON) as ReminderType[]).map((t) => (
-              <Button key={t} size="sm" variant="outline" className="rounded-full" onClick={() => state.triggerReminder(t)}>
-                {reminderLabel[t]}
+            {state.settings.reminders.map((r) => (
+              <Button key={r.id} size="sm" variant="outline" className="rounded-full" onClick={() => state.triggerReminder(r.id)}>
+                <span aria-hidden>{r.emoji}</span> {r.label}
               </Button>
             ))}
           </div>
@@ -169,12 +181,14 @@ export const Dashboard = () => {
 
 const StatCard = ({
   icon: Icon,
+  emoji,
   label,
   value,
   sub,
   accent,
 }: {
-  icon: typeof Droplet;
+  icon?: typeof Activity;
+  emoji?: string;
   label: string;
   value: string;
   sub?: string;
@@ -183,7 +197,11 @@ const StatCard = ({
   <Card className="glass-soft border-0">
     <CardContent className="p-5">
       <div className={cn("mb-4 flex size-10 items-center justify-center rounded-xl", accent ?? "bg-secondary")}>
-        <Icon className={cn("size-5", accent ? "text-white" : "")} />
+        {Icon ? (
+          <Icon className={cn("size-5", accent ? "text-white" : "")} />
+        ) : (
+          <span className="text-lg" aria-hidden>{emoji}</span>
+        )}
       </div>
       <p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p>
       <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>

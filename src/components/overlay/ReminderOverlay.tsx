@@ -1,7 +1,11 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useMemo } from "react";
-import { useEngine } from "@/services/engine";
-import { reminderEmoji, reminderGradient, reminderLabel, reminderMessage } from "@/services/messages";
+import { useEngine, reminderById } from "@/services/engine";
+import {
+  builtInGradient,
+  customGradientStyle,
+  messageForReminder,
+} from "@/services/messages";
 import { Button } from "@/components/ui/button";
 import { Check, X } from "lucide-react";
 
@@ -54,100 +58,105 @@ const Sunlight = () => (
 );
 
 export const ReminderOverlay = () => {
-  const pending = useEngine((s) => s.pendingReminder);
+  const pendingId = useEngine((s) => s.pendingReminder);
+  const reminder = useEngine((s) => (s.pendingReminder ? reminderById(s, s.pendingReminder) : undefined));
   const acknowledge = useEngine((s) => s.acknowledgeReminder);
   const effect = useEngine((s) => s.settings.overlayEffect);
 
-  const message = useMemo(() => (pending ? reminderMessage(pending) : ""), [pending]);
+  const message = useMemo(() => (reminder ? messageForReminder(reminder) : ""), [reminder]);
 
   // auto-dismiss after 10s as completed
   useEffect(() => {
-    if (!pending) return;
+    if (!pendingId) return;
     const id = window.setTimeout(() => acknowledge(true), OVERLAY_DURATION_MS);
     return () => window.clearTimeout(id);
-  }, [pending, acknowledge]);
+  }, [pendingId, acknowledge]);
 
   // Esc dismisses (snoozed = not completed)
   useEffect(() => {
-    if (!pending) return;
+    if (!pendingId) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") acknowledge(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending, acknowledge]);
+  }, [pendingId, acknowledge]);
+
+  if (!pendingId || !reminder) return null;
+
+  const isBuiltIn = reminder.kind !== "custom";
+  const bgClass = isBuiltIn ? builtInGradient[reminder.kind as Exclude<typeof reminder.kind, "custom">] : "";
+  const bgStyle = !isBuiltIn ? customGradientStyle(reminder.hue ?? 280) : undefined;
 
   return (
     <AnimatePresence>
-      {pending && (
+      <motion.div
+        key="overlay"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        className="fixed inset-0 z-[200] flex items-center justify-center"
+      >
+        {/* layered background: branded gradient + frosted glass */}
+        <div className={`absolute inset-0 ${bgClass} opacity-90`} style={bgStyle} />
+        <div className="absolute inset-0 backdrop-blur-2xl bg-background/30" />
+
+        {/* effect layer */}
+        {effect === "bubbles" && <Bubbles />}
+        {effect === "breath" && <BreathRing />}
+        {effect === "lightning" && <Lightning />}
+        {effect === "sunlight" && <Sunlight />}
+
+        {/* central card */}
         <motion.div
-          key="overlay"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="fixed inset-0 z-[200] flex items-center justify-center"
+          initial={{ scale: 0.9, opacity: 0, y: 16 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.95, opacity: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="glass relative z-10 mx-6 max-w-lg rounded-3xl px-10 py-12 text-center shadow-glow"
         >
-          {/* layered background: branded gradient + frosted glass */}
-          <div className={`absolute inset-0 ${reminderGradient[pending]} opacity-90`} />
-          <div className="absolute inset-0 backdrop-blur-2xl bg-background/30" />
+          <div className="mb-6 text-7xl drop-shadow-sm" aria-hidden>
+            {reminder.emoji}
+          </div>
+          <p className="text-sm font-medium uppercase tracking-[0.2em] text-muted-foreground">
+            {reminder.label}
+          </p>
+          <h2 className="mt-3 text-3xl font-semibold leading-tight text-foreground sm:text-4xl">
+            {message}
+          </h2>
+          <p className="mt-4 text-sm text-muted-foreground">
+            This card fades out automatically in 10 seconds.
+          </p>
 
-          {/* effect layer */}
-          {effect === "bubbles" && <Bubbles />}
-          {effect === "breath" && <BreathRing />}
-          {effect === "lightning" && <Lightning />}
-          {effect === "sunlight" && <Sunlight />}
+          <div className="mt-8 flex items-center justify-center gap-3">
+            <Button
+              size="lg"
+              onClick={() => acknowledge(true)}
+              className="rounded-full bg-foreground text-background hover:bg-foreground/90"
+            >
+              <Check className="size-4" /> Done
+            </Button>
+            <Button
+              size="lg"
+              variant="ghost"
+              onClick={() => acknowledge(false)}
+              className="rounded-full"
+            >
+              <X className="size-4" /> Skip
+            </Button>
+          </div>
 
-          {/* central card */}
+          {/* progress bar */}
           <motion.div
-            initial={{ scale: 0.9, opacity: 0, y: 16 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.95, opacity: 0 }}
-            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-            className="glass relative z-10 mx-6 max-w-lg rounded-3xl px-10 py-12 text-center shadow-glow"
-          >
-            <div className="mb-6 text-7xl drop-shadow-sm" aria-hidden>
-              {reminderEmoji[pending]}
-            </div>
-            <p className="text-sm font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              {reminderLabel[pending]}
-            </p>
-            <h2 className="mt-3 text-3xl font-semibold leading-tight text-foreground sm:text-4xl">
-              {message}
-            </h2>
-            <p className="mt-4 text-sm text-muted-foreground">
-              This card fades out automatically in 10 seconds.
-            </p>
-
-            <div className="mt-8 flex items-center justify-center gap-3">
-              <Button
-                size="lg"
-                onClick={() => acknowledge(true)}
-                className="rounded-full bg-foreground text-background hover:bg-foreground/90"
-              >
-                <Check className="size-4" /> Done
-              </Button>
-              <Button
-                size="lg"
-                variant="ghost"
-                onClick={() => acknowledge(false)}
-                className="rounded-full"
-              >
-                <X className="size-4" /> Skip
-              </Button>
-            </div>
-
-            {/* progress bar */}
-            <motion.div
-              key={pending}
-              initial={{ scaleX: 1 }}
-              animate={{ scaleX: 0 }}
-              transition={{ duration: OVERLAY_DURATION_MS / 1000, ease: "linear" }}
-              className="absolute inset-x-0 bottom-0 h-1 origin-right rounded-b-3xl bg-foreground/40"
-            />
-          </motion.div>
+            key={pendingId}
+            initial={{ scaleX: 1 }}
+            animate={{ scaleX: 0 }}
+            transition={{ duration: OVERLAY_DURATION_MS / 1000, ease: "linear" }}
+            className="absolute inset-x-0 bottom-0 h-1 origin-right rounded-b-3xl bg-foreground/40"
+          />
         </motion.div>
-      )}
+      </motion.div>
     </AnimatePresence>
   );
 };
