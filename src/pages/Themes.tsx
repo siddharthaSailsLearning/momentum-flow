@@ -80,11 +80,35 @@ export const Themes = () => {
               </button>
             ))}
           </div>
-          <div className="mt-5 flex justify-end">
-            <Button variant="outline" className="rounded-full" onClick={() => trigger("water")}>
-              Preview overlay
-            </Button>
-          </div>
+          <PreviewButton />
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+const PreviewButton = () => {
+  const reminders = useEngine((s) => s.settings.reminders);
+  const trigger = useEngine((s) => s.triggerReminder);
+  const first = reminders.find((r) => r.enabled) ?? reminders[0];
+  return (
+    <div className="mt-5 flex justify-end">
+      <Button
+        variant="outline"
+        className="rounded-full"
+        disabled={!first}
+        onClick={() => first && trigger(first.id)}
+      >
+        Preview overlay
+      </Button>
+    </div>
+  );
+};
+
+const _End = () => null;
+void _End;
+const __ = `${0}`;
+void __;
         </CardContent>
       </Card>
     </div>
