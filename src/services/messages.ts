@@ -1,7 +1,7 @@
 /**
  * Rotating reminder messages — friendly, varied, brand voice consistent.
  */
-import type { ReminderType } from "./types";
+import type { BuiltInKind, ReminderItem } from "./types";
 
 const water = [
   "Time to hydrate 💧",
@@ -75,30 +75,41 @@ const stretch = [
   "Tiny stretch, huge relief",
 ];
 
-const all: Record<ReminderType, string[]> = { water, eyes, walk, stretch };
+const builtInMessages: Record<BuiltInKind, string[]> = { water, eyes, walk, stretch };
 
-export const reminderMessage = (type: ReminderType): string => {
-  const list = all[type];
+/** Picks a message for any reminder.
+ *  - custom + has customMessage → that message
+ *  - built-in with no custom override → rotating from bank
+ *  - built-in with customMessage → that message */
+export const messageForReminder = (r: ReminderItem): string => {
+  if (r.customMessage && r.customMessage.trim().length > 0) return r.customMessage;
+  if (r.kind === "custom") return "Take a mindful pause";
+  const list = builtInMessages[r.kind];
   return list[Math.floor(Math.random() * list.length)];
 };
 
-export const reminderEmoji: Record<ReminderType, string> = {
-  water: "💧",
-  eyes: "👀",
-  walk: "🚶",
-  stretch: "🧘",
-};
-
-export const reminderLabel: Record<ReminderType, string> = {
+export const builtInLabel: Record<BuiltInKind, string> = {
   water: "Hydrate",
   eyes: "Eye Rest",
   walk: "Move",
   stretch: "Stretch",
 };
 
-export const reminderGradient: Record<ReminderType, string> = {
+export const builtInEmoji: Record<BuiltInKind, string> = {
+  water: "💧",
+  eyes: "👀",
+  walk: "🚶",
+  stretch: "🧘",
+};
+
+export const builtInGradient: Record<BuiltInKind, string> = {
   water: "bg-gradient-water",
   eyes: "bg-gradient-eyes",
   walk: "bg-gradient-walk",
   stretch: "bg-gradient-stretch",
 };
+
+/** Inline style for a custom reminder's gradient surface. */
+export const customGradientStyle = (hue: number): React.CSSProperties => ({
+  backgroundImage: `linear-gradient(135deg, hsl(${hue} 80% 55%), hsl(${(hue + 35) % 360} 85% 65%))`,
+});
