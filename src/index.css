@@ -153,6 +153,12 @@
   }
 }
 
+@keyframes float-up {
+  0% { transform: translateY(0); opacity: 0; }
+  20% { opacity: 0.9; }
+  100% { transform: translateY(-110vh); opacity: 0; }
+}
+
 @layer components {
   .glass {
     background: hsl(var(--glass-bg) / var(--glass-alpha));
