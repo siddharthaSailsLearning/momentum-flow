@@ -34,6 +34,29 @@ function createWindow() {
   mainWindow.removeMenu();
   mainWindow.loadFile(INDEX_HTML);
 
+  // Safety net: if anything tries to navigate to a non-file URL inside the
+  // window (e.g. a stray <a href="/settings">), cancel it and route it
+  // through the in-app HashRouter instead. Prevents the "404 / black screen"
+  // that happens when Electron is asked to load a path that doesn't exist
+  // on disk.
+  mainWindow.webContents.on("will-navigate", (e, url) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "file:") {
+        e.preventDefault();
+        shell.openExternal(url);
+        return;
+      }
+      // Same file:// origin but a different path — bounce back to index.html
+      if (!url.endsWith("index.html") && !url.includes("index.html#")) {
+        e.preventDefault();
+        mainWindow.loadFile(INDEX_HTML);
+      }
+    } catch {
+      e.preventDefault();
+    }
+  });
+
   // Hide to tray instead of quitting
   mainWindow.on("close", (e) => {
     if (!isQuitting) {
