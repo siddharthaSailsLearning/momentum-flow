@@ -1,0 +1,14 @@
+{
+  "_comment": "Fields to merge into your root package.json before packaging. See RUN.md.",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "electron:dev": "vite build && electron electron/main.cjs",
+    "electron:build:win": "vite build && electron-packager . FocusPulse --platform=win32 --arch=x64 --out=electron-release --overwrite --asar --ignore=^/src --ignore=^/public --ignore=^/electron-release",
+    "electron:build:mac": "vite build && electron-packager . FocusPulse --platform=darwin --arch=universal --out=electron-release --overwrite --asar --ignore=^/src --ignore=^/public --ignore=^/electron-release",
+    "electron:build:linux": "vite build && electron-packager . FocusPulse --platform=linux --arch=x64 --out=electron-release --overwrite --asar --ignore=^/src --ignore=^/public --ignore=^/electron-release"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "@electron/packager": "^18.3.5"
+  }
+}
