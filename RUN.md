@@ -183,6 +183,7 @@ Open <http://localhost:8080>. **Stops when you close the terminal.** Not for dai
 
 | Symptom | Fix |
 |---|---|
+| **404 page on launch, then black screen after "Return to homepage"** (Windows .exe) | Caused by `BrowserRouter` under the `file://` protocol. Already fixed in `src/App.tsx` — the app auto-switches to `HashRouter` when `window.location.protocol === "file:"`. Just rebuild: delete `dist/` and `electron-release/`, then re-run `npm run electron:build:win`. URLs inside the .exe will look like `index.html#/settings` — that's correct. |
 | White / blank window in Electron | `vite.config.ts` must have `base: "./"` (already set in this repo). Re-run `vite build`. |
 | Tray icon missing on Windows | Drop a 256×256 PNG named `icon.png` into `electron/`. |
 | App opens twice | The single-instance lock is enabled — make sure only one `FocusPulse.exe` is in autostart. |
